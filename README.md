@@ -266,5 +266,6 @@ ChatGPT や Google Gemini などの AI サービスを補助的に利用して�
 
 ## License
 
-MIT License
+This project is licensed under the MIT License.
+
 SKK辞書はそれぞれの配布元ライセンスに従ってください
