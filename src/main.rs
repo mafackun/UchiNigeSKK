@@ -22,13 +22,13 @@ fn install_panic_hook() {
 }
 
 fn main() -> Result<()> {
-    install_panic_hook();
-    let msg = |s| { let mut msg = String::from("no environment variable: "); msg.push_str(s); msg };
+    use std::fmt::Write;
+    let msg = |s: &str| { let mut m = String::new(); _=write!(m, "no environmnt variable: {}", s); m };
     let (ct, cf, j) = ("CPY_TO", "CPY_FROM", "JISYO_PATH");
     let (ct, cf, j) = (
-        env::var(ct).expect(&msg(&ct)), env::var(cf).expect(&msg(&cf)), env::var(j).expect(&msg(&j)) 
+        env::var(ct).expect(&msg(ct)), env::var(cf).expect(&msg(cf)), env::var(j).expect(&msg(j)) 
     );
-    let jisyo = crate::jisyo::Jisyo::load(&j);
-    frontend::run(jisyo?, &ct, &cf)
+    let jisyo = crate::jisyo::Jisyo::load(&j)?;
+    install_panic_hook();
+    frontend::run(jisyo, &ct, &cf)
 }
-

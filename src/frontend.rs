@@ -21,83 +21,120 @@ use crate::{
     jisyo::Jisyo,
 };
 
+const SIMPLIFIED_WIDTH_TABLE: &[(std::ops::RangeInclusive<u32>, usize)] = &[
+    (0..=0x1F, 4), // control
+    (0x7F..=0x7F, 4), // delete
+    (0x0300..=0x036F, 0), // zero-width
+    (0x200B..=0x200F, 0), // zero-width
+    (0x20..=0x7E, 1), // ascii
+    (0xFF61..=0xFF9F, 1), // hanakaku katakana
+    (0x00A0..=0x00FF, 1), // latin
+    (0x0100..=0x1FFF, 1), // latin/europe
+];
+
 enum FrontCmd {
     SendAndClear,
     Quit,
     Paste,
-    Prev,
+    Undo,
     Clear,
+    Refresh,
 }
 
 fn to_front_cmd(k: &Key) -> Option<FrontCmd> {
+    use termion::event::Key::{*};
     match k {
-        Key::Ctrl('c') => Some(FrontCmd::Quit),
-        Key::Ctrl('v') => Some(FrontCmd::Paste),
-        Key::Ctrl('s') => Some(FrontCmd::SendAndClear),
-        Key::Ctrl('u') => Some(FrontCmd::Prev),
-        Key::Ctrl('d') => Some(FrontCmd::Clear),
+        Ctrl('q') => Some(FrontCmd::Quit),
+        Ctrl('v') => Some(FrontCmd::Paste),
+        Ctrl('s') => Some(FrontCmd::SendAndClear),
+        Ctrl('d') => Some(FrontCmd::Clear),
+        Ctrl('r') => Some(FrontCmd::Refresh),
+        Esc => Some(FrontCmd::Undo),
+        _ => None,
+    }
+}
+
+fn to_key_event_global(k: &Key) -> Option<KeyEvent> {
+    use termion::event::Key::{*};
+    match k {
+        Ctrl('z') => Some(KeyEvent::ToggleHankakuZenkaku),
+        Ctrl('l') => Some(KeyEvent::ToggleLatin),
+        Ctrl('g') => Some(KeyEvent::CancelConversion),
+        Left => Some(KeyEvent::MoveLeft),
+        Right => Some(KeyEvent::MoveRight),
+        Up => Some(KeyEvent::MoveUp),
+        Down => Some(KeyEvent::MoveDown),
+        Home => Some(KeyEvent::ToLineHead),
+        End => Some(KeyEvent::ToLineTail),
+        Delete => Some(KeyEvent::Delete),
+        Backspace => Some(KeyEvent::Backspace),
+        _ => None,
+    }
+}
+
+fn to_key_event_latin(k: &Key) -> Option<KeyEvent> {
+    use termion::event::Key::{*};
+    match k {
+        Char(c) => Some(KeyEvent::Char(*c)),
+        _ => None,
+    }
+}
+
+fn to_key_event_abbrev(k: &Key) -> Option<KeyEvent> {
+    use termion::event::Key::{*};
+    match k {
+        Char(' ') => Some(KeyEvent::StartConversion),
+        Char('\n') => Some(KeyEvent::CommitUnconverted),
+        Char(c) => Some(KeyEvent::Char(*c)),
+        _ => None,
+    }
+}
+
+fn to_key_event_kana(kana_state: &KanaState, k: &Key) -> Option<KeyEvent> {
+    use termion::event::Key::{*};
+    match k {
+        Char('q') => Some(KeyEvent::ToggleKatakana),
+        Char('>') => Some(KeyEvent::Setsuji),
+        Char('/') => Some(KeyEvent::StartAbbrev),
+        Char(c @ ' ') => match kana_state {
+            KanaState::ToBeConverted(_) => Some(KeyEvent::StartConversion),
+            _ => Some(KeyEvent::Char(*c)),
+        },
+        Char(c @ '\n') => match kana_state {
+            KanaState::ToBeConverted(_) => Some(KeyEvent::CommitUnconverted),
+            _ => Some(KeyEvent::Char(*c)),
+        },
+        Char(c) if c.is_ascii_uppercase() => match kana_state {
+            KanaState::ToBeConverted(_) => Some(KeyEvent::Okurigana(c.to_ascii_lowercase())),
+            _ => Some(KeyEvent::StartYomi(c.to_ascii_lowercase())),
+        },
+        Char(c) => Some(KeyEvent::Char(*c)),
+        _ => None,
+    }
+}
+
+fn to_key_event_conversion(k: &Key) -> Option<KeyEvent> {
+    use termion::event::Key::{*};
+    match k {
+        Char(' ') => Some(KeyEvent::NextCandidate),
+        Char('q') => Some(KeyEvent::ToggleKatakana),
+        Char('x') => Some(KeyEvent::PrevCandidate),
+        Char('\n') => Some(KeyEvent::CommitCandidate),
+        Char('>') => Some(KeyEvent::CommitCandidateWithSetsubiji),
+        Char(c) if c.is_ascii_uppercase() => 
+            Some(KeyEvent::CommitCandidateWithStartYomi(c.to_ascii_lowercase())),
+        Char(c) => Some(KeyEvent::CommitCandidateWithChar(*c)),
         _ => None,
     }
 }
 
 fn to_key_event_with_state(state: &InputState, k: &Key) -> Option<KeyEvent> {
-    // 1) グローバル（状態に依存しない意図）
-    match k {
-        Key::Ctrl('z') => return Some(KeyEvent::ToggleHankakuZenkaku),
-        Key::Ctrl('l') => return Some(KeyEvent::ToggleLatin),
-        Key::Ctrl('q') => return Some(KeyEvent::ToggleKatakana),
-        Key::Alt('`') => return Some(KeyEvent::ToggleHKL),
-        Key::Esc => return Some(KeyEvent::CancelConversion),
-
-        Key::Left => return Some(KeyEvent::MoveLeft),
-        Key::Right => return Some(KeyEvent::MoveRight),
-        Key::Up => return Some(KeyEvent::MoveUp),
-        Key::Down => return Some(KeyEvent::MoveDown),
-        Key::Home => return Some(KeyEvent::ToLineHead),
-        Key::End => return Some(KeyEvent::ToLineTail),
-        Key::Delete => return Some(KeyEvent::Delete),
-
-        _ => {}
-    }
-
-    // 2) 状態ごとの解釈
+    if let Some(s) = to_key_event_global(k) { return Some(s); }
     match state {
-        InputState::Latin(_) => match k {
-            Key::Backspace => Some(KeyEvent::Backspace),
-            Key::Char(c) => Some(KeyEvent::Char(*c)),
-            _ => None,
-        },
-
-        InputState::Kana { state: kana_state, .. } => match k {
-            Key::Backspace => Some(KeyEvent::Backspace),
-            Key::Char(' ') => match kana_state {
-                KanaState::ToBeConverted(_) => Some(KeyEvent::StartConversion),
-                _ => Some(KeyEvent::Char(' ')),
-            },
-            Key::Char('\n') => match kana_state {
-                KanaState::ToBeConverted(_) => Some(KeyEvent::CommitUnconvertedYomi),
-                _ => Some(KeyEvent::Char('\n')),
-            },
-            Key::Char('>') => Some(KeyEvent::SetsubijiSettouji),
-            Key::Char(c) if c.is_ascii_uppercase() => match kana_state {
-                KanaState::ToBeConverted(_) => Some(KeyEvent::Okurigana(c.to_ascii_lowercase())),
-                _ => Some(KeyEvent::StartYomi(c.to_ascii_lowercase())),
-            },
-            Key::Char(c) => Some(KeyEvent::Char(*c)),
-            _ => None,
-        },
-
-        InputState::Converting { .. } => match k {
-            Key::Char(' ') => Some(KeyEvent::NextCandidate),
-            Key::Char('x') => Some(KeyEvent::PrevCandidate),
-            Key::Char('\n') => Some(KeyEvent::CommitCandidate),
-            Key::Char('>') => Some(KeyEvent::CommitCandidateWithSetsubiji),
-            Key::Char(c) if c.is_ascii_uppercase() => 
-                Some(KeyEvent::CommitCandidateWithStartYomi(c.to_ascii_lowercase())),
-            Key::Char(c) => Some(KeyEvent::CommitCandidateWithChar(*c)),
-            Key::Backspace => Some(KeyEvent::Backspace),
-            _ => None,
-        },
+        InputState::Latin(_) => return to_key_event_latin(k),
+        InputState::Converting { .. } => return to_key_event_conversion(k),
+        InputState::Kana { state: s, .. } => return to_key_event_kana(s, k),
+        InputState::Abbrev{ .. } => return to_key_event_abbrev(k),
     }
 }
 
@@ -116,16 +153,16 @@ impl Default for Viewport {
             top_row: 0,
             left_cells: 0,
             status_rows: 2,
-            scroll_margin: 3, // 追加: 好みで調整
+            scroll_margin: 4, // 追加: 好みで調整
         }
     }
 }
 
 fn char_width(c: char) -> usize {
-    match c {
-        '\x00'..='\x7F' | '｡'..='ﾟ' => 1,
-        _ => 2,
+    for (range, width) in SIMPLIFIED_WIDTH_TABLE {
+        if range.contains(&(c as u32)) { return *width; }
     }
+    2
 }
 
 fn cells_up_to(chars: &[char], col_chars: usize) -> usize {
@@ -138,59 +175,63 @@ fn snap_left_cells_to_boundary(chars: &[char], desired_cells: usize) -> usize {
 
     for &c in chars {
         let w = char_width(c);
-        if cells + w > desired_cells {
-            break;
-        }
+        if cells + w > desired_cells { break; }
         cells += w;
         last_boundary = cells;
     }
     last_boundary
 }
 
-fn slice_line_by_cells(chars: &[char], left_cells: usize, width_cells: usize) -> String {
-    let mut cells = 0usize;
-    let mut start = 0usize;
-    while start < chars.len() {
-        let w = char_width(chars[start]);
-        if cells + w > left_cells {
-            break;
-        }
-        cells += w;
-        start += 1;
+fn format_line_for_print(chars: &[char], left_cells: usize, width_cells: usize) -> String {
+    use std::fmt::Write;
+    const FMT: &str = "\x1b[2m";
+    const RES: &str = "\x1b[0m";
+    const MORE_L: char = '<';
+    const MORE_R: char = '>';
+    let mut ignored_cells = 0usize;
+    let mut start_idx = 0;
+    for &ch in chars.iter() {
+        let w = char_width(ch);
+        if ignored_cells + w > left_cells { break; }
+        ignored_cells += w;
+        start_idx += 1;
     }
 
     let mut out = String::new();
     let mut used = 0usize;
-    let mut i = start;
-    while i < chars.len() {
-        let w = char_width(chars[i]);
-        if used + w > width_cells {
+    for i in start_idx..chars.len() {
+        let ch = chars[i];
+        let w = char_width(ch);
+        if used + w >= width_cells {
+            _ = write!(out, "{FMT}{}{RES}", MORE_R);
             break;
+        } 
+        if i != 0 && used == 0 {
+            _ = write!(out, "{FMT}{}{RES}", MORE_L);
+            for _ in 0..(w.saturating_sub(1)) { out.push(' '); } // カーソルのズレ防止に文字幅をスペースで調整 
+        } else {
+            match chars[i] as u32 {
+                0x09 => _ = write!(out, "{FMT}\\TAB{RES}"),
+                v @ 0x00..0x20 | v @ 0x7F => _ = write!(out, "{FMT}\\x{:02x}{RES}", v),
+                _ => out.push(ch),
+            }
         }
-        out.push(chars[i]);
         used += w;
-        i += 1;
     }
+
+    // 非空の行が画面外なら記号
+    if out.is_empty() && !chars.is_empty() { _ = write!(out, "{FMT}{}{RES}", MORE_L); }
     out
 }
 
 fn clamp_viewport_to_cursor_y(vp: &mut Viewport, buffer: &Buffer, view_h: usize) {
     let (cur_row, _) = buffer.cursor();
 
-    if view_h == 0 {
-        vp.top_row = cur_row;
-        return;
-    }
-
-    if cur_row < vp.top_row {
-        vp.top_row = cur_row;
-        return;
-    }
+    if view_h == 0 { vp.top_row = cur_row; return; }
+    if cur_row < vp.top_row { vp.top_row = cur_row; return; }
 
     let bottom = vp.top_row + view_h - 1;
-    if cur_row > bottom {
-        vp.top_row = cur_row - (view_h - 1);
-    }
+    if cur_row > bottom { vp.top_row = cur_row - (view_h - 1); }
 }
 
 fn clamp_viewport_to_cursor_x(vp: &mut Viewport, buffer: &Buffer, view_w: usize) {
@@ -233,11 +274,8 @@ fn clamp_viewport_to_cursor_x(vp: &mut Viewport, buffer: &Buffer, view_w: usize)
 
 // -------------------- redraw --------------------
 
-fn redraw<W: Write>(out: &mut W, buffer: &Buffer, state: &InputState, vp: &mut Viewport) {
-    let (w_u16, h_u16) = termion::terminal_size().unwrap_or((80, 24));
-    let term_w = w_u16 as usize;
-    let term_h = h_u16 as usize;
-
+fn redraw<W: Write>(out: &mut W, buffer: &Buffer, state: &InputState, vp: &mut Viewport, has_snap: bool) {
+    let (term_w, term_h) = {let (w, h)=termion::terminal_size().unwrap_or((80, 24)); (w as usize, h as usize)};
     let status_rows = vp.status_rows.max(1);
     let view_h = term_h.saturating_sub(status_rows).max(1);
 
@@ -255,13 +293,8 @@ fn redraw<W: Write>(out: &mut W, buffer: &Buffer, state: &InputState, vp: &mut V
 
         let shown = if row < total_lines {
            let line = buffer.line_as_string(row);
-           let chars: Vec<char> = line
-                .chars()
-                .map( |c| match c as u32 { 
-                    v@0x00..=0x1F => char::from_u32(0x2400+v).unwrap(), 0x7F=>'␡', _=>c
-                } )
-                .collect();
-            slice_line_by_cells(&chars, vp.left_cells, term_w)
+           let chars: Vec<char> = line.chars().collect();
+           format_line_for_print(&chars, vp.left_cells, term_w)
         } else {
             String::new()
         };
@@ -279,8 +312,14 @@ fn redraw<W: Write>(out: &mut W, buffer: &Buffer, state: &InputState, vp: &mut V
         let _ = write!(out, "{}{}", cursor::Goto(1, y), clear::CurrentLine);
     }
 
-    let _ = write!(out, "{}┌ {}", cursor::Goto(1, status_top_y as u16), state);
-    let _ = write!(out, "{}└ {}", cursor::Goto(1, (status_top_y + status_rows - 1) as u16), buffer);
+    let (state_shown, buffer_shown) = {
+        let s: Vec<char> = format!("┌ {}", state).chars().collect();
+        let b: Vec<char> = format!("└ {}{}", buffer, if has_snap {" +undo"} else {""}).chars().collect();
+        (format_line_for_print(&s, 0, term_w), format_line_for_print(&b, 0, term_w))
+    };
+
+    let _ = write!(out, "{}{}", cursor::Goto(1, status_top_y as u16), state_shown);
+    let _ = write!(out, "{}{}", cursor::Goto(1, (status_top_y + status_rows) as u16), buffer_shown);
 
     // ---------- Cursor ----------
     let (row, col_chars) = buffer.cursor();
@@ -331,65 +370,75 @@ fn copy_from_clipboard(cpyf: &str) -> String {
     let out = Command::new(cmd)
         .args(args.split_whitespace())
         .output().expect("command CPY_FROM failure");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+// -------------------- snapshot --------------------
+fn take_snapshot(is_take: bool, has_snap: &mut bool, buffer: &Buffer, snap: &mut Buffer) {
+    if is_take {*snap = buffer.clone(); }
+    else { snap.clear(); }
+    *has_snap = is_take;
 }
 
 // -------------------- run --------------------
-
 pub fn run(jisyo: Jisyo, cpyt: &str, cpyf: &str) -> io::Result<()> {
     let tty_in = OpenOptions::new().read(true).open("/dev/tty")?;
     let mut ui = OpenOptions::new().read(true).write(true).open("/dev/tty")?
         .into_raw_mode()?
         .into_alternate_screen()?;
 
-    let (mut buffer, mut prev) = (Buffer::default(), Buffer::default());
+    let (mut buffer, mut snap) = (Buffer::default(), Buffer::default());
     let mut state = InputState::new_kana();
     let mut vp = Viewport::default();
+    let mut has_snap = false;
 
     let _ = write!(ui, "{}", cursor::Show);
     let _ = ui.flush();
 
-    redraw(&mut ui, &buffer, &state, &mut vp);
+    redraw(&mut ui, &buffer, &state, &mut vp, has_snap);
 
     for key in tty_in.keys() {
-        let k = match key {
-            Ok(k) => k,
-            Err(_) => continue,
-        };
+        let k = match key { Ok(k) => k, Err(_) => continue, };
 
         if let Some(cmd) = to_front_cmd(&k) {
             match cmd {
                 FrontCmd::Quit => break,
+                 FrontCmd::Refresh => {
+                    redraw(&mut ui, &buffer, &state, &mut vp, has_snap);
+                    continue;
+                }
                 FrontCmd::Clear => {
-                    prev = buffer.clone();
+                    take_snapshot(true, &mut has_snap, &buffer, &mut snap);
                     buffer.clear();
-                    redraw(&mut ui, &buffer, &state, &mut vp);
+                    redraw(&mut ui, &buffer, &state, &mut vp, has_snap);
                     continue;
                 },
                 FrontCmd::SendAndClear => {
-                    prev = buffer.clone();
+                    take_snapshot(true, &mut has_snap, &buffer, &mut snap);
                     copy_to_clipboard(&buffer.as_string(), cpyt);
                     buffer.clear();
-                    redraw(&mut ui, &buffer, &state, &mut vp);
+                    redraw(&mut ui, &buffer, &state, &mut vp, has_snap);
                     continue;
                 },
                 FrontCmd::Paste => {
-                    prev = buffer.clone();
+                    take_snapshot(true, &mut has_snap, &buffer, &mut snap);
                     buffer.insert_str(&copy_from_clipboard(cpyf));
-                    redraw(&mut ui, &buffer, &state, &mut vp);
+                    redraw(&mut ui, &buffer, &state, &mut vp, has_snap);
                     continue;
                 },
-                FrontCmd::Prev => {
-                    (buffer, prev) = (prev,buffer);
-                    redraw(&mut ui, &buffer, &state, &mut vp);
+                FrontCmd::Undo => {
+                    if !has_snap { continue; }
+                    (buffer, snap) = (snap, buffer);
+                    redraw(&mut ui, &buffer, &state, &mut vp, has_snap);
                     continue;
                 }
             }
         }
 
         if let Some(ev) = to_key_event_with_state(&state, &k) {
+            take_snapshot(false, &mut has_snap, &buffer, &mut snap);
             state = handle_key(state, &mut buffer, &jisyo, ev);
-            redraw(&mut ui, &buffer, &state, &mut vp);
+            redraw(&mut ui, &buffer, &state, &mut vp, has_snap);
         }
 
     }
@@ -398,4 +447,3 @@ pub fn run(jisyo: Jisyo, cpyt: &str, cpyf: &str) -> io::Result<()> {
     let _ = ui.flush();
     Ok(())
 }
-

@@ -1,15 +1,32 @@
 use std::io;
 
 #[derive(Debug, Clone)]
-pub struct Jisyo {
+struct SingleJisyo {
     text: String,
-    /// 各要素は「有効な行（空行/コメント除外）」の行頭 byte offset
-    /// yomi でソート済み
-    line_starts: Vec<usize>,
+    line_starts: Vec<u32>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Jisyo(Vec<SingleJisyo>);
+
 impl Jisyo {
-    pub fn load(path: &str) -> io::Result<Self> {
+    pub fn load(pathes: &str) -> io::Result<Self> {
+        let mut ret = Vec::<SingleJisyo>::new();
+        let it = pathes.split(':');
+        for path in it { ret.push(SingleJisyo::load(path)?); }
+        Ok(Jisyo(ret))
+    }
+
+    pub fn lookup(&self, yomi: &str) -> Option<Vec<String>> {
+        let mut ret = Vec::<String>::new();
+        let Jisyo(vec) = self;
+        for j in vec { if let Some(mut c) = j.lookup(yomi) {ret.append(&mut c)} }
+        if ret.is_empty() { None } else { Some(ret) }
+    }
+}
+
+impl SingleJisyo {
+    fn load(path: &str) -> io::Result<Self> {
         let text = std::fs::read_to_string(path)?;
 
         // 1) 有効行の行頭だけ収集
@@ -18,7 +35,7 @@ impl Jisyo {
 
         // 先頭行
         if Self::is_valid_line(&text, start) {
-            line_starts.push(start);
+            line_starts.push(start as u32);
         }
 
         // '\n' の次が次行の先頭
@@ -26,15 +43,15 @@ impl Jisyo {
             if b == b'\n' {
                 start = i + 1;
                 if start < text.len() && Self::is_valid_line(&text, start) {
-                    line_starts.push(start);
+                    line_starts.push(start as u32);
                 }
             }
         }
 
         // 2) yomi でソート（辞書がソート済みでも、安全側で一度やる）
         line_starts.sort_by(|&a, &b| {
-            let ya = Self::yomi_at(&text, a);
-            let yb = Self::yomi_at(&text, b);
+            let ya = Self::yomi_at(&text, a as usize);
+            let yb = Self::yomi_at(&text, b as usize);
             ya.cmp(yb)
         });
 
@@ -42,20 +59,16 @@ impl Jisyo {
     }
 
     /// 見つからなければ None
-    pub fn lookup(&self, yomi: &str) -> Option<Vec<String>> {
+    fn lookup(&self, yomi: &str) -> Option<Vec<String>> {
         let text = &self.text;
 
         let idx = self
             .line_starts
-            .binary_search_by(|&start| Self::yomi_at(text, start).cmp(yomi))
+            .binary_search_by(|&start| Self::yomi_at(text, start as usize).cmp(yomi))
             .ok()?;
 
-        let start = self.line_starts[idx];
+        let start = self.line_starts[idx] as usize;
         Some(Self::candidates_at(text, start))
-    }
-
-    pub fn text(&self) -> &str {
-        &self.text
     }
 
     // --------------------

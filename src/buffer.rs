@@ -22,9 +22,9 @@ impl Display for Buffer {
     }
 }
 
+type IsOperationDone = bool;
 impl Buffer {
     // --- getters (UI用) ---
-
     pub fn cursor(&self) -> (usize, usize) {
         (self.row, self.col)
     }
@@ -115,12 +115,12 @@ impl Buffer {
     }
 
     pub fn delete(&mut self) {
-        if let Ok(()) = self.move_right() {
+        if self.move_right() {
             self.backspace();
         }
     }
 
-    pub fn move_left(&mut self) -> Result<(), ()> {
+    pub fn move_left(&mut self) -> IsOperationDone{
         self.ensure_invariants();
 
         if self.col > 0 {
@@ -129,12 +129,12 @@ impl Buffer {
             self.row -= 1;
             self.col = self.lines[self.row].len();
         } else {
-            return Err(());
+            return false;
         }
-        Ok(())
+        true
     }
 
-    pub fn move_right(&mut self) -> Result<(), ()> {
+    pub fn move_right(&mut self) -> IsOperationDone {
         self.ensure_invariants();
 
         let line_len = self.lines[self.row].len();
@@ -144,36 +144,35 @@ impl Buffer {
             self.row += 1;
             self.col = 0;
         } else {
-            return Err(());
+            return false;
         }
-        Ok(())
+        true
     }
 
-    pub fn move_up(&mut self) -> Result<(), ()> {
+    pub fn move_up(&mut self) -> IsOperationDone {
         self.ensure_invariants();
 
         if self.row > 0 {
             self.row -= 1;
             self.col = self.col.min(self.lines[self.row].len());
         } else {
-            return Err(());
+            return false;
         }
-        Ok(())
-
+        true
     }
 
-    pub fn move_down(&mut self) -> Result<(), ()> {
+    pub fn move_down(&mut self) -> IsOperationDone {
         self.ensure_invariants();
 
         if self.row + 1 < self.lines.len() {
             self.row += 1;
             self.col = self.col.min(self.lines[self.row].len());
         } else {
-            return Err(());
+            return false;
         }
-        Ok(())
-
+        true
     }
+
     pub fn move_line_head(&mut self) {
         self.ensure_invariants();
         self.col = 0;

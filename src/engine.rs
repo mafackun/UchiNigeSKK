@@ -7,42 +7,65 @@ use crate::{
     tables::HIRAGANA_TO_HALFWIDTH_KATAKANA,
 };
 
-pub fn handle_key(
-    state: InputState,
-    buffer: &mut Buffer,
-    jisyo: &Jisyo,
-    key: KeyEvent,
-) -> InputState {
-    match key {
-        KeyEvent::MoveLeft => { _ = buffer.move_left();  return state; }
-        KeyEvent::MoveRight => { _ = buffer.move_right(); return state; }
-        KeyEvent::MoveUp => { _ = buffer.move_up();    return state; }
-        KeyEvent::MoveDown => { _ = buffer.move_down();  return state; }
-        KeyEvent::ToLineHead => { buffer.move_line_head(); return state; }
-        KeyEvent::ToLineTail => { buffer.move_line_tail(); return state; }
-        KeyEvent::Delete => { buffer.delete(); return state; }
-        _ => {}
-    }
+type IsOperationDone = bool;
 
+pub fn handle_key(state: InputState, buffer: &mut Buffer, jisyo: &Jisyo, key: KeyEvent) -> InputState {
+    if handle_key_cursor(buffer, key) { return state; }
+    else { return handle_key_state(state, buffer, jisyo, key); }
+}
+
+fn handle_key_cursor(buffer: &mut Buffer, key: KeyEvent) -> IsOperationDone {
+    match key {
+        KeyEvent::MoveLeft => _ = buffer.move_left(),
+        KeyEvent::MoveRight => _ = buffer.move_right(),
+        KeyEvent::MoveUp => _ = buffer.move_up(),
+        KeyEvent::MoveDown => _ = buffer.move_down(),
+        KeyEvent::ToLineHead => buffer.move_line_head(),
+        KeyEvent::ToLineTail => buffer.move_line_tail(),
+        KeyEvent::Delete => buffer.delete(),
+        _ => { return false; }, 
+    }
+    true
+}
+
+fn handle_key_state(state: InputState, buffer: &mut Buffer, jisyo: &Jisyo, key: KeyEvent) -> InputState {
     match state {
         InputState::Kana {romaji, state} => handle_kana(romaji, state, buffer, jisyo, key),
-        InputState::Converting {yomi:y, candidates:c, selected_index:i} => handle_converting(y, c, i, buffer, jisyo, key),
+        InputState::Converting 
+            {yomi:y, candidates:c, selected_index:i} => handle_converting(y, c, i, buffer, jisyo, key),
         InputState::Latin(zenkaku) => handle_latin(zenkaku, buffer, key),
+        InputState::Abbrev{s} => handle_abbrev(s, buffer, jisyo, key),
     }
 }
 
 // -------------------- Latin --------------------
 
 fn handle_latin(mut is_zenkaku: bool, buffer: &mut Buffer, key: KeyEvent) -> InputState {
-    use KeyEvent::{ToggleLatin, ToggleHankakuZenkaku, Char, Backspace, ToggleHKL};
+    use KeyEvent::{ToggleLatin, ToggleHankakuZenkaku, Char, Backspace};
     match key {
         Char(c) => buffer.insert_char(if is_zenkaku { convert_to_zenkaku_ascii(c) } else { c }),
         ToggleHankakuZenkaku => is_zenkaku = !is_zenkaku,
         Backspace => buffer.backspace(),
-        ToggleLatin | ToggleHKL => return InputState::new_kana(),
+        ToggleLatin=> return InputState::new_kana(),
         _ => (),
     }
     InputState::Latin(is_zenkaku)
+}
+
+// -------------------- Abbrev --------------------
+
+fn handle_abbrev(mut s: String, buffer: &mut Buffer, jisyo: &Jisyo, key: KeyEvent) -> InputState {
+    use KeyEvent::{
+        StartConversion, Char, Backspace, CommitUnconverted, 
+    };
+    match key {
+        Char(c) => s.push(c),
+        Backspace => if !s.is_empty() { _ = s.pop() } else { return InputState::new_kana() },
+        CommitUnconverted => { buffer.insert_str(&s); return InputState::new_kana(); },
+        StartConversion => if let Some(c)=InputState::new_converting(&s, jisyo) { return c; },
+        _ => (),
+    }
+    InputState::Abbrev{s}
 }
 
 // -------------------- Kana --------------------
@@ -57,29 +80,32 @@ fn handle_kana(
 ) -> InputState {
     use KanaState::{*};
     use KeyEvent::{
-        ToggleLatin, ToggleHankakuZenkaku, ToggleKatakana, ToggleHKL, StartConversion, Char, Backspace, 
-        CommitUnconvertedYomi, SetsubijiSettouji, StartYomi, Okurigana
+        ToggleLatin, ToggleHankakuZenkaku, ToggleKatakana, StartConversion, Char, Backspace, 
+        CommitUnconverted, Setsuji, StartYomi, Okurigana, StartAbbrev,
     };
 
     match key {
         ToggleLatin => return InputState::new_latin(),
+        StartAbbrev => return InputState::new_abbrev(),
         ToggleHankakuZenkaku => state = (match state {
             Katakana(hankaku) => Katakana(!hankaku),
             Hiragana(zenkaku) => Hiragana(!zenkaku),
             other => other,
         }),
-        ToggleKatakana => state = (match state { 
-            Hiragana(_) => KanaState::new_katakana(), 
-            Katakana(_) => KanaState::new_hiragana(), 
-            _ => KanaState::new_katakana(), 
-        }),
-        ToggleHKL => state = (match state {
-            Hiragana(_) => KanaState::new_katakana(), 
-            Katakana(_) => return InputState::new_latin(), 
-            other => other,
-        }),
+        ToggleKatakana => state = (
+            if let ToBeConverted(ref y)=state {
+                buffer.insert_str(&convert_to_katakana(&delete_setsuji(y)));
+                return InputState::new_kana();
+            } else {
+                match state { 
+                    Hiragana(_) => KanaState::new_katakana(), 
+                    Katakana(_) => KanaState::new_hiragana(), 
+                    _ => KanaState::new_katakana(), 
+                }
+            }
+        ),
         StartConversion => if let ToBeConverted(ref y)=state { 
-            if let Some(c)=InputState::new_converting(y, jisyo) { return c; }
+            if let Some(c)=InputState::new_converting(y, jisyo) && y != ">" { return c; }
         },
         Backspace => {
             if !romaji.is_empty() { romaji.pop(); } 
@@ -88,9 +114,12 @@ fn handle_kana(
                 else { state = KanaState::new_hiragana(); } } 
             else { buffer.backspace(); }
         }
-        CommitUnconvertedYomi => 
-            if let ToBeConverted(ref mut y)=state { buffer.insert_str(y); return InputState::new_kana(); },
-        SetsubijiSettouji if romaji.is_empty() => {
+        CommitUnconverted => 
+            if let ToBeConverted(ref mut y)=state { 
+                buffer.insert_str(&delete_setsuji(y)); 
+                return InputState::new_kana(); 
+            },
+        Setsuji if romaji.is_empty() => {
             if let ToBeConverted(ref mut y) = state && !y.is_empty() {
                 y.push('>');
                 if let Some(c)=InputState::new_converting(y, jisyo) { return c; }
@@ -141,7 +170,7 @@ fn handle_converting(
 ) -> InputState {
     use KeyEvent::{
         CommitCandidate, CancelConversion, NextCandidate, PrevCandidate, Backspace, Char, StartYomi, 
-        SetsubijiSettouji, CommitCandidateWithChar, CommitCandidateWithStartYomi, CommitCandidateWithSetsubiji,
+        Setsuji, CommitCandidateWithChar, CommitCandidateWithStartYomi, CommitCandidateWithSetsubiji,
         ToggleKatakana
     };
     match key {
@@ -149,26 +178,31 @@ fn handle_converting(
         NextCandidate => if selected_index + 1 < candidates.len() { selected_index += 1; },
         PrevCandidate => if selected_index > 0 { selected_index -= 1; },
         Backspace => {
+            if yomi.is_ascii() {
+                return InputState::Abbrev{s: yomi};
+            }
             match yomi.chars().last() { Some(c) if c.is_ascii() => { yomi.pop(); }, _ => (), }
             return InputState::Kana{ romaji: String::new(), state: KanaState::ToBeConverted(yomi) };
         },
-        CommitCandidate => return commit_candidate(yomi, candidates, selected_index, buffer, jisyo),
+        CommitCandidate => 
+            return commit_candidate(yomi, candidates, selected_index, KanaState::new_hiragana(), buffer, jisyo),
         CommitCandidateWithChar(next) => {
-            let next_state = commit_candidate(yomi, candidates, selected_index, buffer, jisyo);
+            let next_state = 
+                commit_candidate(yomi, candidates, selected_index, KanaState::new_hiragana(), buffer, jisyo);
             return handle_key(next_state, buffer, jisyo, Char(next));
         },
         CommitCandidateWithStartYomi(next) => {
-            let next_state = commit_candidate(yomi, candidates, selected_index, buffer, jisyo);
+            let next_state = 
+                commit_candidate(yomi, candidates, selected_index, KanaState::new_hiragana(), buffer, jisyo);
             return handle_key(next_state, buffer, jisyo, StartYomi(next));
         },
         CommitCandidateWithSetsubiji => {
-            let next_state = commit_candidate(yomi, candidates, selected_index, buffer, jisyo);
-            return handle_key(next_state, buffer, jisyo, SetsubijiSettouji);
+            let next_state = 
+                commit_candidate(yomi, candidates, selected_index, KanaState::new_hiragana(), buffer, jisyo);
+            return handle_key(next_state, buffer, jisyo, Setsuji);
         },
-        ToggleKatakana => {
-            let next_state = commit_candidate(yomi, candidates, selected_index, buffer, jisyo);
-            return handle_key(next_state, buffer, jisyo, ToggleKatakana);
-        },
+        ToggleKatakana =>
+            return commit_candidate(yomi, candidates, selected_index, KanaState::new_katakana(), buffer, jisyo),
         _ => (),
     }
     InputState::Converting { yomi, candidates, selected_index }
@@ -177,18 +211,18 @@ fn handle_converting(
 // -------------------- Helpers --------------------
 
 fn commit_candidate(
-    mut yomi: String,
+    yomi: String,
     candidates: Vec<String>,
     selected_index: usize,
+    kana_state: KanaState,
     buffer: &mut Buffer,
     jisyo: &Jisyo,
 ) -> InputState {
-    let cand = candidates.get(selected_index);
-    let (commit, _) = crate::state::split_candidate(cand.unwrap());
+    let (commit, _) = InputState::candidate(&candidates, selected_index);
+    let mut next_state = InputState::Kana {romaji: String::new(), state: kana_state};
     buffer.insert_str(commit);
-    let mut next_state = InputState::new_kana();
-    if let Some(okurigana) =yomi.pop() && okurigana.is_ascii_lowercase() {
-        next_state = handle_key(next_state, buffer, jisyo, KeyEvent::Char(okurigana));
+    if let Some(okuri) = InputState::okuri(&yomi) {
+        next_state = handle_key(next_state, buffer, jisyo, KeyEvent::Char(okuri));
     }
     next_state
 }
@@ -202,6 +236,10 @@ fn commit_kana(buffer: &mut Buffer, state: &mut KanaState, kana: &str) {
             &( if *hankaku { convert_to_halfwidth_katakana(kana)} else { convert_to_katakana(kana)} )
         ),
     }
+}
+
+fn delete_setsuji(s: &str) -> String {
+    s.to_string().replace('>', "")
 }
 
 fn convert_to_katakana(hiragana: &str) -> String {

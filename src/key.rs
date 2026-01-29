@@ -16,17 +16,17 @@ pub enum KeyEvent {
     // --- モード切替 ---
     ToggleLatin,
     ToggleKatakana,
-    ToggleHKL,
     ToggleHankakuZenkaku,
 
     // --- かな ---
-    CommitUnconvertedYomi,
-    SetsubijiSettouji,
+    CommitUnconverted,
+    Setsuji,
     StartYomi(char),
     Okurigana(char),
 
     // --- 変換 ---
     StartConversion,
+    StartAbbrev,
 
     // --- 候補選択 ---
     NextCandidate,

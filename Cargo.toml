@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [profile.release]
-opt-level = "z"        # サイズ最適化（"s"でも可）
-lto = true             # LTO
-codegen-units = 1      # 最適化しやすい
-panic = "abort"        # unwind不要なら大きく削れる
-strip = true           # シンボル削除（Rust 1.72+）
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
 
 [dependencies]
 termion = "4"
