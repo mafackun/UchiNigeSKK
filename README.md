@@ -41,7 +41,7 @@ unskk は静的リンクされた単体バイナリとして配布していま�
 例：
 
 ```sh
-tar xzf unskk-<version>-x86_64-unknown-linux-musl.tar.gz
+tar xzf unskk-0.1.0-x86_64-unknown-linux-musl.tar.gz
 chmod +x unskk
 mv unskk ~/.local/bin/
 ```
