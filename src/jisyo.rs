@@ -13,14 +13,20 @@ impl Jisyo {
     pub fn load(pathes: &str) -> io::Result<Self> {
         let mut ret = Vec::<SingleJisyo>::new();
         let it = pathes.split(':');
-        for path in it { ret.push(SingleJisyo::load(path)?); }
+        for path in it {
+            ret.push(SingleJisyo::load(path)?);
+        }
         Ok(Jisyo(ret))
     }
 
     pub fn lookup(&self, yomi: &str) -> Option<Vec<String>> {
         let mut ret = Vec::<String>::new();
         let Jisyo(vec) = self;
-        for j in vec { if let Some(mut c) = j.lookup(yomi) {ret.append(&mut c)} }
+        for j in vec {
+            if let Some(mut c) = j.lookup(yomi) {
+                ret.append(&mut c)
+            }
+        }
         if ret.is_empty() { None } else { Some(ret) }
     }
 }
@@ -58,7 +64,7 @@ impl SingleJisyo {
         Ok(Self { text, line_starts })
     }
 
-    /// 見つからなければ None
+    // 見つからなければ None
     fn lookup(&self, yomi: &str) -> Option<Vec<String>> {
         let text = &self.text;
 
@@ -71,10 +77,6 @@ impl SingleJisyo {
         Some(Self::candidates_at(text, start))
     }
 
-    // --------------------
-    // internal helpers
-    // --------------------
-
     fn is_valid_line(text: &str, start: usize) -> bool {
         // 行頭から改行までの slice を取って trim
         let line = Self::line_slice(text, start);
@@ -82,7 +84,7 @@ impl SingleJisyo {
         !t.is_empty() && !t.starts_with(';')
     }
 
-    fn line_slice<'a>(text: &'a str, start: usize) -> &'a str {
+    fn line_slice(text: &str, start: usize) -> &str {
         let bytes = text.as_bytes();
         let mut end = start;
         while end < bytes.len() && bytes[end] != b'\n' {
@@ -91,9 +93,9 @@ impl SingleJisyo {
         &text[start..end]
     }
 
-    /// 行の yomi を返す（`yomi<space>/.../` の yomi 部分）
-    /// 形式が崩れていて space が無い場合は行全体（trim前）を返す
-    fn yomi_at<'a>(text: &'a str, start: usize) -> &'a str {
+    // 行の yomi を返す（`yomi<space>/.../` の yomi 部分）
+    // 形式が崩れていて space が無い場合は行全体（trim前）を返す
+    fn yomi_at(text: &str, start: usize) -> &str {
         let line = Self::line_slice(text, start);
 
         // 先頭の空白を許容するなら trim_start しても良いが、
@@ -105,8 +107,8 @@ impl SingleJisyo {
         }
     }
 
-    /// 行の候補一覧を返す（アノテーション剥がし無し）
-    /// `yomi<space>/cand1/cand2/.../` を想定
+    // 行の候補一覧を返す（アノテーション剥がし無し）
+    // `yomi<space>/cand1/cand2/.../` を想定
     fn candidates_at(text: &str, start: usize) -> Vec<String> {
         let line = Self::line_slice(text, start);
 
@@ -125,4 +127,3 @@ impl SingleJisyo {
             .collect()
     }
 }
-

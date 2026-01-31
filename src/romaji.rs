@@ -18,8 +18,7 @@ pub fn search_lookup_table(romaji: &str) -> KanaMatch<'static> {
     }
 
     // partition_point: 最初に table[i].0 >= romaji となる位置
-    let i = ROMAJI_TO_HIRAGANA
-        .partition_point(|(k, _, _)| k < &romaji);
+    let i = ROMAJI_TO_HIRAGANA.partition_point(|(k, _, _)| k < &romaji);
 
     // 1) 完全一致
     if let Some((k, commit, pushback)) = ROMAJI_TO_HIRAGANA.get(i) {
@@ -39,4 +38,3 @@ pub fn search_lookup_table(romaji: &str) -> KanaMatch<'static> {
 
     KanaMatch::Failure
 }
-

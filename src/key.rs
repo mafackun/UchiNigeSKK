@@ -21,8 +21,7 @@ pub enum KeyEvent {
     // --- かな ---
     CommitUnconverted,
     Setsuji,
-    StartYomi(char),
-    Okurigana(char),
+    StartYomiOrOkuri(char),
 
     // --- 変換 ---
     StartConversion,
@@ -37,4 +36,3 @@ pub enum KeyEvent {
     CommitCandidateWithSetsubiji,
     CancelConversion,
 }
-

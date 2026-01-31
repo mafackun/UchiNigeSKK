@@ -18,7 +18,13 @@ impl Default for Buffer {
 use std::fmt::{self, Display, Formatter};
 impl Display for Buffer {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "カーソル位置: ({}, {})  総行数: {}", self.row + 1, self.col + 1, self.line_count())
+        write!(
+            f,
+            "カーソル位置: ({}, {})  総行数: {}",
+            self.row + 1,
+            self.col + 1,
+            self.line_count()
+        )
     }
 }
 
@@ -120,7 +126,7 @@ impl Buffer {
         }
     }
 
-    pub fn move_left(&mut self) -> IsOperationDone{
+    pub fn move_left(&mut self) -> IsOperationDone {
         self.ensure_invariants();
 
         if self.col > 0 {
@@ -201,4 +207,3 @@ impl Buffer {
         }
     }
 }
-
