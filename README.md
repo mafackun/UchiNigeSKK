@@ -1,5 +1,7 @@
 # unskk (UchiNigeSKK)
 
+![Image](https://github.com/user-attachments/assets/33cbb8f0-8abe-4bc3-a1a2-a1d4f2aa6e04)
+
 ## 概要
 unskkは、Rust + Termionで実装されたシンプルかつ軽量なTUIベースの日本語入力ツールです。
 
