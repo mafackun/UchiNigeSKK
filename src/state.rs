@@ -1,4 +1,8 @@
 use crate::jisyo::Jisyo;
+use crate::util::push_itoa_usize_to_string;
+
+const HANKAKU: &str = "半角";
+const ZENKAKU: &str = "全角";
 
 #[derive(Clone)]
 pub enum KanaState {
@@ -19,9 +23,7 @@ pub enum InputState {
         candidates: Vec<String>,
         selected_index: usize,
     },
-    Abbrev {
-        s: String,
-    },
+    Abbrev(String),
 }
 
 impl KanaState {
@@ -30,6 +32,26 @@ impl KanaState {
     }
     pub fn new_katakana() -> Self {
         Self::Katakana(false)
+    }
+    pub fn status_as_string(&self) -> String {
+        let mut out = String::new();
+        match self {
+            Self::Hiragana(zenkaku) => {
+                out.push_str("かな/");
+                out.push_str(if *zenkaku { ZENKAKU } else { HANKAKU });
+                out.push_str("記号 ");
+            }
+            Self::Katakana(hankaku) => {
+                out.push_str("カナ/");
+                out.push_str(if *hankaku { HANKAKU } else { ZENKAKU });
+                out.push(' ');
+            }
+            Self::ToBeConverted(yomi) => {
+                out.push_str("かな ▽");
+                out.push_str(yomi);
+            }
+        };
+        out
     }
 }
 
@@ -44,7 +66,7 @@ impl InputState {
         }
     }
     pub fn new_abbrev() -> Self {
-        Self::Abbrev { s: String::new() }
+        Self::Abbrev(String::new())
     }
     pub fn new_converting(yomi: &str, jisyo: &Jisyo) -> Option<Self> {
         Some(Self::Converting {
@@ -70,50 +92,45 @@ impl InputState {
             _ => None,
         }
     }
-}
 
-const HANKAKU: &str = "半角";
-const ZENKAKU: &str = "全角";
-
-use std::fmt::{Display, Formatter, Result};
-impl Display for KanaState {
-    fn fmt(&self, f: &mut Formatter) -> Result {
+    pub fn status_as_string(&self) -> String {
+        let mut out = String::new();
         match self {
-            Self::Hiragana(zenkaku) => {
-                write!(f, "かな/{}記号 ", if *zenkaku { ZENKAKU } else { HANKAKU })
+            Self::Abbrev(s) => {
+                out.push_str(" aあ ▽");
+                out.push_str(s);
             }
-            Self::Katakana(hankaku) => {
-                write!(f, "カナ/{} ", if *hankaku { HANKAKU } else { ZENKAKU })
-            }
-            Self::ToBeConverted(yomi) => write!(f, "かな ▽{}", yomi),
-        }
-    }
-}
-
-impl Display for InputState {
-    fn fmt(&self, f: &mut Formatter) -> Result {
-        match self {
-            Self::Abbrev { s } => write!(f, " aあ ▽{}", s),
             Self::Latin(zenkaku) => {
-                write!(f, "無変換/{}", if *zenkaku { ZENKAKU } else { HANKAKU })
+                out.push_str("無変換/");
+                out.push_str(if *zenkaku { ZENKAKU } else { HANKAKU });
             }
-            Self::Kana { romaji, state } => write!(f, "{}{}", state, romaji),
+            Self::Kana { romaji, state } => {
+                out.push_str(&state.status_as_string());
+                out.push_str(romaji);
+            }
             Self::Converting {
                 yomi,
                 candidates,
                 selected_index,
             } => {
                 let (cand, annotation) = InputState::candidate(candidates, *selected_index);
-                write!(f, "かな ▼{}", cand)?;
+                out.push_str("かな ▼");
+                out.push_str(cand);
                 if let Some(c) = InputState::okuri(yomi) {
-                    write!(f, "*{}", c)?;
+                    out.push('*');
+                    out.push(c);
                 }
-                write!(f, " [{}/{}]", *selected_index + 1, candidates.len())?;
+                out.push_str(" [");
+                push_itoa_usize_to_string(&mut out, *selected_index + 1, 10);
+                out.push('/');
+                push_itoa_usize_to_string(&mut out, candidates.len(), 10);
+                out.push(']');
                 if let Some(annotation) = annotation {
-                    write!(f, "  註:{}", annotation)?;
+                    out.push_str(" 註:");
+                    out.push_str(annotation);
                 }
-                Ok(())
             }
-        }
+        };
+        out
     }
 }

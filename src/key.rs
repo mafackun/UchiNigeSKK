@@ -1,17 +1,25 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Move {
+    Left,
+    Right,
+    Up,
+    Down,
+    RapidUp,
+    RapidDown,
+    LineHead,
+    LineTail,
+    SelectLeft,
+    SelectRight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyEvent {
     // --- 共通（編集・入力） ---
     Char(char),
     Backspace,
     Delete,
 
-    // --- カーソル移動 ---
-    MoveLeft,
-    MoveRight,
-    MoveUp,
-    MoveDown,
-    ToLineHead,
-    ToLineTail,
+    Navigation(Move),
 
     // --- モード切替 ---
     ToggleLatin,
